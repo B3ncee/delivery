@@ -16,6 +16,7 @@ const saveStateToStorage = () => {
     users: state.users,
     currentUser: state.currentUser ? state.currentUser.username : null,
     shift: state.shift,
+    orders: state.orders,
     currentOrderId: state.currentOrder ? state.currentOrder.id : null,
     historyShifts: state.historyShifts,
     historyOrders: state.historyOrders,
@@ -33,12 +34,13 @@ const loadStateFromStorage = () => {
     if (copy.historyOrders) state.historyOrders = copy.historyOrders;
     if (copy.logs) state.logs = copy.logs;
     if (copy.shift) state.shift = copy.shift;
+    if (copy.orders) state.orders = copy.orders;
     if (copy.currentUser) {
       const user = state.users.find(u => u.username === copy.currentUser);
       if (user) state.currentUser = user;
     }
     if (copy.currentOrderId && state.shift) {
-      const order = state.shift.orders.find(o => o.id === copy.currentOrderId);
+      const order = state.shift.orders.find(o => o.id === copy.currentOrderId) || state.orders.find(o => o.id === copy.currentOrderId);
       if (order) state.currentOrder = order;
     }
   } catch (err) {
@@ -446,6 +448,9 @@ const refreshState = () => {
     hide('start-tracking-btn');
   } else {
     show('order-list-panel');
+    show('order-panel');
+    show('payment-panel');
+    show('tip-panel');
     hide('map-panel');
     hide('start-tracking-btn');
     hide('stop-tracking-btn');
@@ -472,14 +477,15 @@ el('login-btn').addEventListener('click', () => {
 el('logout-btn').addEventListener('click', () => {
   if (state.currentUser) logEvent(`Kijelentkezés: ${state.currentUser.name}`);
   state.currentUser = null;
-  state.shift = null;
-  state.orders = [];
+  // Megtartjuk a state.shift-et, hogy újranyitáskor folytatható legyen a szolgálat
+  // state.shift = null;
+  // state.orders = [];
   state.currentOrder = null;
   el('username').value = '';
   el('password').value = '';
   saveStateToStorage();
   refreshState();
-  toast('Kijelentkezve');
+  toast('Kijelentkezve (szolgálat megőrizve)');
 });
 
 el('add-order-btn').addEventListener('click', () => {
