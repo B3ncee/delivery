@@ -1,15 +1,40 @@
 const state = {
   users: [
-    { username: 'futar', password: '1234', name: 'Futár', totalKm: 0, totalTip: 0 },
-    { username: 'fbence', password: '1234', name: 'Bence', totalKm: 0, totalTip: 0 },
-    { username: 'vdorina', password: '1234', name: 'Dorina', totalKm: 0, totalTip: 0 }
+    { username: 'futar', password: '1234', name: 'Futár', totalKm: 0, totalTip: 0 }
   ],
   currentUser: null,
   shift: null,
   orders: [],
   currentOrder: null,
   logs: [],
+  historyShifts: [],
+  historyOrders: []
 };
+
+const saveStateToStorage = () => {
+  const cloned = {
+    users: state.users,
+    historyShifts: state.historyShifts,
+    historyOrders: state.historyOrders,
+    logs: state.logs,
+  };
+  localStorage.setItem('deliveryAppState', JSON.stringify(cloned));
+};
+
+const loadStateFromStorage = () => {
+  const raw = localStorage.getItem('deliveryAppState');
+  if (!raw) return;
+  try {
+    const copy = JSON.parse(raw);
+    if (copy.historyShifts) state.historyShifts = copy.historyShifts;
+    if (copy.historyOrders) state.historyOrders = copy.historyOrders;
+    if (copy.logs) state.logs = copy.logs;
+  } catch (err) {
+    console.warn('Nem sikerült betölteni az állapotot:', err);
+  }
+};
+
+loadStateFromStorage();
 
 const carOptions = ['JXJ-978'];
 
@@ -116,11 +141,10 @@ const resetOrderForm = () => {
 const renderOrderList = () => {
   const list = el('orders-list');
   const orders = state.shift ? state.shift.orders : [];
-  if (!orders.length) {
-    list.innerHTML = '<p>Nincsenek rendelések.</p>';
-    return;
-  }
-  list.innerHTML = orders.map(order => {
+  const activeOrders = orders.filter(o => !o.paid || !o.delivered);
+  const finishedOrders = orders.filter(o => o.paid && o.delivered);
+
+  const makeOrderHtml = order => {
     const status = order.paid ? 'Kifizetett' : 'Fizetetlen';
     const delivery = order.delivered ? 'Kiszállítva' : (order.deliveryStart ? 'Úton' : 'Várakozik');
     const duration = order.deliveryDuration ? ` (${order.deliveryDuration}s)` : '';
@@ -132,11 +156,23 @@ const renderOrderList = () => {
         <span>Fizetési mód: ${order.payMethod} (${status})</span>
         <span>Borravaló: ${order.tip || 0} Ft</span>
         <span>Státusz: ${delivery}${duration}</span>
-        <button data-action="pay" data-id="${order.id}" ${order.paid ? 'disabled' : ''}>Fizetés</button>
-        <button data-action="tip" data-id="${order.id}" ${!order.paid ? 'disabled' : ''}>Borravaló</button>
-        <button data-action="delivery" data-id="${order.id}" ${order.delivered ? 'disabled' : ''}>${order.deliveryStart ? 'Kiszállítás befejezése' : 'Kiszállítás indítása'}</button>
+        <div class="order-actions">
+          <button data-action="pay" data-id="${order.id}" ${order.paid ? 'disabled' : ''}>Fizetés</button>
+          <button data-action="tip" data-id="${order.id}" ${!order.paid ? 'disabled' : ''}>Borravaló</button>
+          <button data-action="delivery" data-id="${order.id}" ${order.delivered ? 'disabled' : ''}>${order.deliveryStart ? (order.delivered ? 'Kiszállítva' : 'Kiszállítás befejezése') : 'Kiszállítás indítása'}</button>
+        </div>
       </div>`;
-  }).join('');
+  };
+
+  if (!orders.length) {
+    list.innerHTML = '<p>Nincsenek rendelések.</p>';
+    return;
+  }
+
+  const activeHtml = activeOrders.length ? `<h4>Aktív rendelések</h4>${activeOrders.map(makeOrderHtml).join('')}` : '<p>Nincsenek aktív rendelések.</p>';
+  const finishedHtml = finishedOrders.length ? `<h4>Fizetett + lezárt rendelések</h4>${finishedOrders.map(makeOrderHtml).join('')}` : '<p>Nincsenek fizetett lezárt rendelések.</p>';
+
+  list.innerHTML = `${activeHtml}${finishedHtml}`;
 
   list.querySelectorAll('.order-row button').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -158,6 +194,7 @@ const renderOrderList = () => {
       }
       if (btn.dataset.action === 'delivery') {
         if (order.delivered) {
+          toast('Ez a rendelés már teljesen lezárt.');
           return;
         }
         if (!order.deliveryStart) {
@@ -166,9 +203,18 @@ const renderOrderList = () => {
           renderOrderList();
           return;
         }
+        if (!order.paid) {
+          setCurrentOrderForPayment(order);
+          toast('Először fizesd ki a rendelést a fizetési panelen, majd jelöld készre.');
+          return;
+        }
         order.deliveryDuration = Math.round((Date.now() - order.deliveryStart) / 1000);
         order.delivered = true;
         logEvent(`Kiszállítás befejezve: ${order.code} (${order.deliveryDuration}s)`);
+        if (state.shift) {
+          state.historyOrders.push(order);
+        }
+        saveStateToStorage();
         renderOrderList();
         return;
       }
@@ -183,6 +229,22 @@ const setCurrentOrderForPayment = order => {
   show('payment-panel');
   show('tip-panel');
   logEvent(`Rendelés kiválasztva fizetéshez: ${order.code} (${order.amount} Ft)`);
+};
+
+const renderHistory = () => {
+  const list = el('history-list');
+  if (!state.historyOrders.length && !state.historyShifts.length) {
+    list.innerHTML = '<p>Nincs korábbi adat.</p>';
+    return;
+  }
+  let html = '';
+  if (state.historyShifts.length) {
+    html += '<h4>Zárt szolgálatok</h4>' + state.historyShifts.map(s => `<div class="history-entry"><strong>${s.car}</strong> ${new Date(s.startTime).toLocaleString()} - ${new Date(s.endTime).toLocaleString()}</div>`).join('');
+  }
+  if (state.historyOrders.length) {
+    html += '<h4>Fizetett rendelések</h4>' + state.historyOrders.map(o => `<div class="history-entry">${o.code} - ${o.amount} Ft - ${o.address} - ${o.payMethod} - ${o.paid ? 'Kifizetett' : 'Nincs fizetve'} - ${o.delivered ? 'Kiszállítva' : 'Nem kiszállítva'}</div>`).join('');
+  }
+  list.innerHTML = html;
 };
 
 const renderProfile = () => {
@@ -201,7 +263,7 @@ const renderProfile = () => {
 };
 
 const setActiveShift = (car, km, cash) => {
-  state.shift = { car, startKm: km, cash: cash, startTime: new Date(), orders: [] };
+  state.shift = { car, startKm: km, cash: cash, startTime: new Date().toISOString(), orders: [] };
   state.currentOrder = null;
   show('order-panel');
   show('order-list-panel');
@@ -210,6 +272,7 @@ const setActiveShift = (car, km, cash) => {
   show('map-panel');
   renderOrderList();
   logEvent(`Szolgálat indítva: ${car}, start km: ${km}, készpénz: ${cash} Ft`);
+  saveStateToStorage();
 };
 
 const refreshState = () => {
@@ -249,17 +312,21 @@ el('login-btn').addEventListener('click', () => {
     return;
   }
   state.currentUser = found;
+  logEvent(`Bejelentkezés: ${found.name}`);
+  saveStateToStorage();
   el('login-error').textContent = '';
   echoStart();
 });
 
 el('logout-btn').addEventListener('click', () => {
+  if (state.currentUser) logEvent(`Kijelentkezés: ${state.currentUser.name}`);
   state.currentUser = null;
   state.shift = null;
   state.orders = [];
   state.currentOrder = null;
   el('username').value = '';
   el('password').value = '';
+  saveStateToStorage();
   refreshState();
   toast('Kijelentkezve');
 });
@@ -274,6 +341,22 @@ el('start-shift-btn').addEventListener('click', () => {
   show('shift-panel');
 });
 
+el('close-day-btn').addEventListener('click', () => {
+  if (!state.shift) {
+    toast('Nincs aktív szolgálat.');
+    return;
+  }
+  const closedShift = { ...state.shift, endTime: new Date().toISOString() };
+  state.historyShifts.push(closedShift);
+  state.historyOrders.push(...closedShift.orders);
+  state.shift = null;
+  state.currentOrder = null;
+  saveStateToStorage();
+  logEvent(`Napzárás végrehajtva: szolgálat lezárva ${closedShift.car}`);
+  refreshState();
+  toast('Napzárás megtörtént, szolgálat lezárva.');
+});
+
 el('show-orders-btn').addEventListener('click', () => {
   show('order-list-panel');
   hide('log-panel');
@@ -282,13 +365,23 @@ el('show-orders-btn').addEventListener('click', () => {
 
 el('show-log-btn').addEventListener('click', () => {
   hide('order-list-panel');
+  hide('history-panel');
   hide('profile-panel');
   show('log-panel');
+});
+
+el('show-history-btn').addEventListener('click', () => {
+  hide('order-list-panel');
+  hide('log-panel');
+  hide('profile-panel');
+  show('history-panel');
+  renderHistory();
 });
 
 el('show-profile-btn').addEventListener('click', () => {
   hide('order-list-panel');
   hide('log-panel');
+  hide('history-panel');
   show('profile-panel');
   renderProfile();
 });
@@ -376,6 +469,7 @@ el('confirm-payment-btn').addEventListener('click', () => {
     logEvent(`Fizetés megerősítve ${typeName}-ként majd a rendelés lezárva: ${order.amount} Ft`);
   }
 
+  saveStateToStorage();
   show('tip-panel');
   toast('Fizetés rögzítve');
 });
@@ -394,6 +488,7 @@ el('add-tip-btn').addEventListener('click', () => {
   if (state.shift) state.shift.cash += tip;
   if (state.currentUser) state.currentUser.totalTip += tip;
   logEvent(`Borravaló rögzítve ${tip} Ft. Tárca: ${state.shift.cash} Ft`);
+  saveStateToStorage();
   renderProfile();
   toast('Borravaló mentve');
   el('tip-amount').value = '';
