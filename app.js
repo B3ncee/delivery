@@ -14,6 +14,9 @@ const state = {
 const saveStateToStorage = () => {
   const cloned = {
     users: state.users,
+    currentUser: state.currentUser ? state.currentUser.username : null,
+    shift: state.shift,
+    currentOrderId: state.currentOrder ? state.currentOrder.id : null,
     historyShifts: state.historyShifts,
     historyOrders: state.historyOrders,
     logs: state.logs,
@@ -29,6 +32,15 @@ const loadStateFromStorage = () => {
     if (copy.historyShifts) state.historyShifts = copy.historyShifts;
     if (copy.historyOrders) state.historyOrders = copy.historyOrders;
     if (copy.logs) state.logs = copy.logs;
+    if (copy.shift) state.shift = copy.shift;
+    if (copy.currentUser) {
+      const user = state.users.find(u => u.username === copy.currentUser);
+      if (user) state.currentUser = user;
+    }
+    if (copy.currentOrderId && state.shift) {
+      const order = state.shift.orders.find(o => o.id === copy.currentOrderId);
+      if (order) state.currentOrder = order;
+    }
   } catch (err) {
     console.warn('Nem sikerült betölteni az állapotot:', err);
   }
@@ -141,8 +153,8 @@ const resetOrderForm = () => {
 const renderOrderList = () => {
   const list = el('orders-list');
   const orders = state.shift ? state.shift.orders : [];
-  const activeOrders = orders.filter(o => !o.paid || !o.delivered);
-  const finishedOrders = orders.filter(o => o.paid && o.delivered);
+  const activeOrders = orders.filter(o => !o.archived);
+  const finishedOrders = orders.filter(o => o.archived);
 
   const makeOrderHtml = order => {
     const status = order.paid ? 'Kifizetett' : 'Fizetetlen';
@@ -239,12 +251,32 @@ const renderHistory = () => {
   }
   let html = '';
   if (state.historyShifts.length) {
-    html += '<h4>Zárt szolgálatok</h4>' + state.historyShifts.map(s => `<div class="history-entry"><strong>${s.car}</strong> ${new Date(s.startTime).toLocaleString()} - ${new Date(s.endTime).toLocaleString()}</div>`).join('');
+    html += '<h4>Zárt szolgálatok</h4>' + state.historyShifts.map(s => `<div class="history-entry"><strong>${s.car}</strong> ${new Date(s.startTime).toLocaleString()} - ${new Date(s.endTime).toLocaleString()} | Napi készpénz: ${s.cash || 0} Ft</div>`).join('');
   }
   if (state.historyOrders.length) {
-    html += '<h4>Fizetett rendelések</h4>' + state.historyOrders.map(o => `<div class="history-entry">${o.code} - ${o.amount} Ft - ${o.address} - ${o.payMethod} - ${o.paid ? 'Kifizetett' : 'Nincs fizetve'} - ${o.delivered ? 'Kiszállítva' : 'Nem kiszállítva'}</div>`).join('');
+    html += '<h4>Fizetett + archivált rendelések</h4>' + state.historyOrders.map(o => `
+      <div class="history-entry" id="history-${o.id}">
+        ${o.code} - ${o.amount} Ft - ${o.address} - ${o.payMethod} - ${o.paid ? 'Kifizetett' : 'Nincs fizetve'} - ${o.delivered ? 'Kiszállítva' : 'Nem kiszállítva'} - Borravaló: ${o.tip || 0} Ft
+        <button data-action="edit-history" data-id="${o.id}" class="mini-btn">Szerkesztés</button>
+      </div>
+    `).join('');
   }
   list.innerHTML = html;
+
+  list.querySelectorAll('button[data-action="edit-history"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const id = Number(btn.dataset.id);
+      const order = state.historyOrders.find(o => o.id === id);
+      if (!order) return;
+      state.currentOrder = order;
+      el('tip-amount').value = order.tip || 0;
+      el('actual-payment-type').value = order.payMethod;
+      show('payment-panel');
+      show('tip-panel');
+      toast(`Szerkesztheted: ${order.code}`);
+      renderOrderList();
+    });
+  });
 };
 
 const renderProfile = () => {
@@ -262,6 +294,121 @@ const renderProfile = () => {
   `;
 };
 
+const safeOrderId = () => Date.now() + Math.floor(Math.random() * 1000);
+
+const moveOrderToHistory = (order) => {
+  const existing = state.historyOrders.find(o => o.id === order.id);
+  if (!existing) {
+    state.historyOrders.push({ ...order });
+  }
+};
+
+const settleOrderIfReady = (order) => {
+  if (order && order.paid) {
+    if (order.tip == null) order.tip = 0;
+    if (!order.archived) {
+      order.archived = true;
+      moveOrderToHistory(order);
+      logEvent(`Rendelés archiválva: ${order.code} (${order.amount} Ft, borravaló: ${order.tip || 0} Ft)`);
+    }
+  }
+};
+
+const addOrder = () => {
+  if (!state.shift) {
+    toast('Előbb indítsd el a szolgálatot.');
+    return;
+  }
+  const code = el('order-code').value.trim();
+  const amount = Number(el('order-amount').value || 0);
+  const address = el('order-address').value.trim();
+  const phone = el('order-phone').value.trim();
+  const payMethod = el('order-pay-method').value;
+  if (!code || amount <= 0 || !address || !phone) {
+    toast('Minden mezőt ki kell tölteni, összeg > 0.');
+    return;
+  }
+  const order = {
+    id: safeOrderId(),
+    code,
+    amount,
+    address,
+    phone,
+    payMethod,
+    paid: false,
+    delivered: false,
+    deliveryStart: null,
+    deliveryDuration: null,
+    tip: 0,
+    paymentTime: null,
+    archived: false
+  };
+  state.shift.orders.push(order);
+  logEvent(`Új rendelés felvéve: ${code} (${amount} Ft, ${payMethod})`);
+  resetOrderForm();
+  saveStateToStorage();
+  renderOrderList();
+};
+
+const confirmPayment = () => {
+  if (!state.currentOrder) {
+    toast('Válassz rendelést a fizetéshez.');
+    return;
+  }
+  const selectedPayMethod = el('actual-payment-type').value;
+  const order = state.currentOrder;
+  order.payMethod = selectedPayMethod;
+  if (selectedPayMethod === 'kp') {
+    const denominations = [20000,10000,5000,2000,1000,500,200,100,50];
+    let sum = 0;
+    denominations.forEach(d => {
+      const value = Number(el(`d${d}`).value || 0);
+      sum += value * d;
+    });
+    if (sum < order.amount) {
+      toast('A készpénz összege legalább a rendelés értéke legyen.');
+      return;
+    }
+    if (state.shift) {
+      state.shift.cash += order.amount;
+    }
+  }
+
+  order.paid = true;
+  order.paymentTime = new Date().toISOString();
+
+  if (state.currentUser) {
+    state.currentUser.totalTip = state.currentUser.totalTip || 0;
+  }
+
+  logEvent(`Rendelés kifizetve: ${order.code} (${order.amount} Ft) (${selectedPayMethod})`);
+  settleOrderIfReady(order);
+  saveStateToStorage();
+  renderOrderList();
+  toast('Fizetés rögzítve. Adj hozzá borravalót, ha van.');
+};
+
+const addTip = () => {
+  if (!state.currentOrder) {
+    toast('Válassz rendelést, amire borravalót szeretnél adni.');
+    return;
+  }
+  const tipValue = Number(el('tip-amount').value || 0);
+  if (tipValue < 0) {
+    toast('Borravaló nem lehet negatív.');
+    return;
+  }
+  state.currentOrder.tip = tipValue;
+  if (state.currentUser) {
+    state.currentUser.totalTip = (state.currentUser.totalTip || 0) + tipValue;
+  }
+  logEvent(`Borravaló rögzítve: ${state.currentOrder.code} +${tipValue} Ft`);
+  settleOrderIfReady(state.currentOrder);
+  saveStateToStorage();
+  renderOrderList();
+  toast('Borravaló mentve.');
+};
+
 const setActiveShift = (car, km, cash) => {
   state.shift = { car, startKm: km, cash: cash, startTime: new Date().toISOString(), orders: [] };
   state.currentOrder = null;
@@ -269,7 +416,8 @@ const setActiveShift = (car, km, cash) => {
   show('order-list-panel');
   show('payment-panel');
   show('tip-panel');
-  show('map-panel');
+  // GPS panel el lesz távolítva (nem hangsúlyos)
+  hide('map-panel');
   renderOrderList();
   logEvent(`Szolgálat indítva: ${car}, start km: ${km}, készpénz: ${cash} Ft`);
   saveStateToStorage();
@@ -295,9 +443,12 @@ const refreshState = () => {
     hide('map-panel');
     hide('map');
     hide('stop-tracking-btn');
-    show('start-tracking-btn');
+    hide('start-tracking-btn');
   } else {
     show('order-list-panel');
+    hide('map-panel');
+    hide('start-tracking-btn');
+    hide('stop-tracking-btn');
     renderOrderList();
   }
 };
@@ -331,6 +482,26 @@ el('logout-btn').addEventListener('click', () => {
   toast('Kijelentkezve');
 });
 
+el('add-order-btn').addEventListener('click', () => {
+  addOrder();
+});
+
+el('confirm-payment-btn').addEventListener('click', () => {
+  confirmPayment();
+});
+
+el('add-tip-btn').addEventListener('click', () => {
+  addTip();
+});
+
+el('actual-payment-type').addEventListener('change', () => {
+  if (el('actual-payment-type').value === 'kp') {
+    show('cash-denominations');
+  } else {
+    hide('cash-denominations');
+  }
+});
+
 const echoStart = () => {
   renderCarSelect();
   refreshState();
@@ -341,6 +512,21 @@ el('start-shift-btn').addEventListener('click', () => {
   show('shift-panel');
 });
 
+el('confirm-shift-btn').addEventListener('click', () => {
+  const car = el('car-select').value;
+  const startKm = Number(el('start-km').value || 0);
+  const startCash = Number(el('start-cash').value || 0);
+  if (!car || startKm < 0 || startCash < 0) {
+    toast('Add meg a rendszámot, induló km-et és készpénz értéket.');
+    return;
+  }
+  setActiveShift(car, startKm, startCash);
+  toast('Szolgálat elindítva és mentve.');
+  el('start-km').value = '';
+  el('start-cash').value = '';
+  hide('shift-panel');
+});
+
 el('close-day-btn').addEventListener('click', () => {
   if (!state.shift) {
     toast('Nincs aktív szolgálat.');
@@ -348,7 +534,11 @@ el('close-day-btn').addEventListener('click', () => {
   }
   const closedShift = { ...state.shift, endTime: new Date().toISOString() };
   state.historyShifts.push(closedShift);
-  state.historyOrders.push(...closedShift.orders);
+  closedShift.orders.forEach(order => {
+    if (!state.historyOrders.some(o => o.id === order.id)) {
+      state.historyOrders.push({ ...order });
+    }
+  });
   state.shift = null;
   state.currentOrder = null;
   saveStateToStorage();
@@ -399,42 +589,9 @@ el('stop-tracking-btn').addEventListener('click', () => {
   stopTracking();
 });
 
-el('confirm-shift-btn').addEventListener('click', () => {
-  const car = el('car-select').value;
-  const km = Number(el('start-km').value);
-  const cash = Number(el('start-cash').value);
-  if (!car || isNaN(km) || isNaN(cash)) {
-    toast('Kérlek töltsd ki az összes mezőt!');
-    return;
-  }
-  setActiveShift(car, km, cash);
-});
-
-el('add-order-btn').addEventListener('click', () => {
-  if (!state.shift) {
-    toast('Előbb indítsd a szolgálatot!');
-    return;
-  }
-  const code = el('order-code').value.trim();
-  const amount = Number(el('order-amount').value);
-  const payMethod = el('order-pay-method').value;
-  const address = el('order-address').value.trim();
-  const phone = el('order-phone').value.trim();
-  if (!code || !amount || !address || !phone) {
-    toast('Minden rendelés mezőt tölts ki!');
-    return;
-  }
-  const order = { id: Date.now(), code, amount, payMethod, address, phone, paid: false, tip: 0 };
-  state.orders.push(order);
-  state.shift.orders.push(order);
-  state.currentOrder = order;
-  logEvent(`Rendelés felvéve: ${code}, ${amount} Ft, fizetés: ${payMethod}, cím: ${address}, tel: ${phone}`);
-  resetOrderForm();
-  renderOrderList();
-  show('order-list-panel');
-  hide('log-panel');
-  toast('Rendelés rögzítve');
-});
+// Inicializálás oldalbetöltésnél
+renderCarSelect();
+refreshState();
 
 el('actual-payment-type').addEventListener('change', (e) => {
   const v = e.target.value;
