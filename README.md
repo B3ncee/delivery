@@ -3,7 +3,7 @@
 Egyszerű böngészős telefonos app demonstráció a futárszolgálat menedzsmentjéhez.
 
 ## Fő funkciók
-- bejelentkezés (futár, fbence, vdorina felhasználók, mind `1234` jelszóval)
+- bejelentkezés (futár felhasználó, `1234` jelszóval)
 - szolgálat indítása (autó kiválasztása, km, kp)
 - rendelés felvétele (kód, összeg, fizetési mód, cím, telefon)
 - rendelés lista (Rendelések fül), telefonszám másolás, fizetés/borravaló, kiszállítás időmérő
