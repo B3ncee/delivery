@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Futár App</title>
+  <link rel="stylesheet" href="styles.css" />  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script></head>
+<body>
+  <div class="app">
+    <header>
+      <h1>Futár Szolgálat</h1>
+    </header>
+
+    <section id="login-section" class="screen">
+      <h2>Bejelentkezés</h2>
+      <input id="username" placeholder="Felhasználónév" />
+      <input id="password" type="password" placeholder="Jelszó" />
+      <button id="login-btn">Belépés</button>
+      <div id="login-error" class="error"></div>
+    </section>
+
+    <section id="main-section" class="screen hidden">
+      <div class="top-row">
+        <span id="welcome"></span>
+        <button id="logout-btn">Kijelentkezés</button>
+      </div>
+
+      <div class="control-card">
+        <h3>Szolgálat</h3>
+        <button id="start-shift-btn">Szolgálat felvétele</button>
+        <button id="close-day-btn">Napzárás</button>
+      </div>
+
+      <div id="shift-panel" class="control-card hidden">
+        <h3>Aktív szolgálat</h3>
+        <div>
+          <label>Autó rendszám:</label>
+          <select id="car-select"></select>
+        </div>
+        <div>
+          <label>Induló km:</label>
+          <input type="number" id="start-km" min="0" />
+        </div>
+        <div>
+          <label>Készpénz a tárcában (Ft):</label>
+          <input type="number" id="start-cash" min="0" />
+        </div>
+        <button id="confirm-shift-btn">Indít</button>
+      </div>
+
+      <div id="map-panel" class="control-card hidden">
+        <h3>Térkép nyomkövetés</h3>
+        <div id="map" class="map hidden"></div>
+        <button id="start-tracking-btn">GPS követés indítása</button>
+        <button id="stop-tracking-btn" class="hidden">GPS követés leállítása</button>
+        <p id="tracking-status" style="margin-top:8px;font-size:14px;color:#333;"></p>
+      </div>
+
+      <div id="order-panel" class="control-card hidden">
+        <h3>Rendelés felvétele</h3>
+        <div>
+          <label>Rendelés kódja (pl. V22):</label>
+          <input id="order-code" />
+        </div>
+        <div>
+          <label>Összeg (Ft):</label>
+          <input type="number" id="order-amount" min="0" />
+        </div>
+        <div>
+          <label>Fizetés módja:</label>
+          <select id="order-pay-method">
+            <option value="kp">Készpénz</option>
+            <option value="bank">Bankkártya</option>
+            <option value="szep">Szép kártya</option>
+          </select>
+        </div>
+        <div>
+          <label>Cím:</label>
+          <input id="order-address" placeholder="utca, házszám, város" />
+        </div>
+        <div>
+          <label>Telefonszám:</label>
+          <input id="order-phone" placeholder="+36..." />
+        </div>
+        <button id="add-order-btn">Rendelés mentése</button>
+      </div>
+
+      <div id="payment-panel" class="control-card hidden">
+        <h3>Fizetés</h3>
+        <label>Válassza ki a fizetést:</label>
+        <select id="actual-payment-type">
+          <option value="kp">Készpénz</option>
+          <option value="bank">Bankkártya</option>
+          <option value="szep">Szép kártya</option>
+        </select>
+        <div id="cash-denominations" class="hidden">
+          <h4>Készpénzes címletek</h4>
+          <label>20000:</label><input type="number" id="d20000" min="0" value="0" />
+          <label>10000:</label><input type="number" id="d10000" min="0" value="0" />
+          <label>5000:</label><input type="number" id="d5000" min="0" value="0" />
+          <label>2000:</label><input type="number" id="d2000" min="0" value="0" />
+          <label>1000:</label><input type="number" id="d1000" min="0" value="0" />
+          <label>500:</label><input type="number" id="d500" min="0" value="0" />
+          <label>200:</label><input type="number" id="d200" min="0" value="0" />
+          <label>100:</label><input type="number" id="d100" min="0" value="0" />
+          <label>50:</label><input type="number" id="d50" min="0" value="0" />
+        </div>
+        <button id="confirm-payment-btn">Fizetés megerősítése</button>
+      </div>
+
+      <div id="tip-panel" class="control-card hidden">
+        <h3>Borravaló hozzáadása</h3>
+        <input type="number" id="tip-amount" min="0" placeholder="Borravaló (Ft)" />
+        <button id="add-tip-btn">Borravaló mentése</button>
+      </div>
+
+      <div class="tabs">
+        <button id="show-orders-btn">Rendelések</button>
+        <button id="show-log-btn">Napló</button>
+        <button id="show-profile-btn">Profil</button>
+      </div>
+
+      <div id="order-list-panel" class="control-card hidden">
+        <h3>Rendelések</h3>
+        <div id="orders-list"></div>
+      </div>
+
+      <div id="log-panel" class="control-card hidden">
+        <h3>Napló</h3>
+        <div id="log"></div>
+      </div>
+
+      <div id="profile-panel" class="control-card hidden">
+        <h3>Profil</h3>
+        <div id="profile-info"></div>
+      </div>
+    </section>
+
+    <div id="toast" class="toast hidden"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
