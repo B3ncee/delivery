@@ -275,7 +275,7 @@ const addOrder = () => {
   renderOrderList();
 };
 
-const confirmPayment = () => {
+const confirmPayment = async () => {
   if (!state.currentOrder) {
     toast('Válassz rendelést a fizetéshez.');
     return;
@@ -299,6 +299,15 @@ const confirmPayment = () => {
     }
   }
 
+  // Valós idejű fizetés szimuláció
+  const paymentPanel = el('payment-panel');
+  paymentPanel.classList.add('loading');
+  el('confirm-payment-btn').disabled = true;
+  toast('Fizetés feldolgozása...');
+
+  // Várakozás 5 másodperc (valós alkalmazásban ez API hívás lenne)
+  await new Promise(resolve => setTimeout(resolve, 5000));
+
   order.paid = true;
   order.paymentTime = new Date().toISOString();
 
@@ -310,7 +319,9 @@ const confirmPayment = () => {
   settleOrderIfReady(order);
   saveStateToDB();
   renderOrderList();
-  toast('Fizetés rögzítve. Adj hozzá borravalót, ha van.');
+  paymentPanel.classList.remove('loading');
+  el('confirm-payment-btn').disabled = false;
+  toast('Fizetés sikeresen rögzítve! Adj hozzá borravalót, ha van.');
 };
 
 const addTip = () => {
