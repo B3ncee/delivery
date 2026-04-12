@@ -11,8 +11,33 @@ const state = {
   historyOrders: []
 };
 
-const saveStateToStorage = () => {
+const DB_NAME = 'DeliveryAppDB';
+const DB_VERSION = 1;
+let db = null;
+
+const initDB = () => {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+      db = request.result;
+      resolve(db);
+    };
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('state')) {
+        db.createObjectStore('state', { keyPath: 'id' });
+      }
+    };
+  });
+};
+
+const saveStateToDB = async () => {
+  if (!db) await initDB();
+  const transaction = db.transaction(['state'], 'readwrite');
+  const store = transaction.objectStore('state');
   const cloned = {
+    id: 'appState',
     users: state.users,
     currentUser: state.currentUser ? state.currentUser.username : null,
     shift: state.shift,
@@ -22,33 +47,47 @@ const saveStateToStorage = () => {
     historyOrders: state.historyOrders,
     logs: state.logs,
   };
-  localStorage.setItem('deliveryAppState', JSON.stringify(cloned));
+  store.put(cloned);
+  transaction.oncomplete = () => console.log('Állapot mentve az adatbázisba.');
+  transaction.onerror = () => console.error('Hiba az állapot mentésekor:', transaction.error);
 };
 
-const loadStateFromStorage = () => {
-  const raw = localStorage.getItem('deliveryAppState');
-  if (!raw) return;
-  try {
-    const copy = JSON.parse(raw);
-    if (copy.historyShifts) state.historyShifts = copy.historyShifts;
-    if (copy.historyOrders) state.historyOrders = copy.historyOrders;
-    if (copy.logs) state.logs = copy.logs;
-    if (copy.shift) state.shift = copy.shift;
-    if (copy.orders) state.orders = copy.orders;
-    if (copy.currentUser) {
-      const user = state.users.find(u => u.username === copy.currentUser);
-      if (user) state.currentUser = user;
-    }
-    if (copy.currentOrderId && state.shift) {
-      const order = state.shift.orders.find(o => o.id === copy.currentOrderId) || state.orders.find(o => o.id === copy.currentOrderId);
-      if (order) state.currentOrder = order;
-    }
-  } catch (err) {
-    console.warn('Nem sikerült betölteni az állapotot:', err);
-  }
+const loadStateFromDB = async () => {
+  if (!db) await initDB();
+  const transaction = db.transaction(['state'], 'readonly');
+  const store = transaction.objectStore('state');
+  const request = store.get('appState');
+  return new Promise((resolve, reject) => {
+    request.onsuccess = () => {
+      const copy = request.result;
+      if (copy) {
+        if (copy.historyShifts) state.historyShifts = copy.historyShifts;
+        if (copy.historyOrders) state.historyOrders = copy.historyOrders;
+        if (copy.logs) state.logs = copy.logs;
+        if (copy.shift) state.shift = copy.shift;
+        if (copy.orders) state.orders = copy.orders;
+        if (copy.currentUser) {
+          const user = state.users.find(u => u.username === copy.currentUser);
+          if (user) state.currentUser = user;
+        }
+        if (copy.currentOrderId && state.shift) {
+          const order = state.shift.orders.find(o => o.id === copy.currentOrderId) || state.orders.find(o => o.id === copy.currentOrderId);
+          if (order) state.currentOrder = order;
+        }
+      }
+      resolve();
+    };
+    request.onerror = () => reject(request.error);
+  });
 };
 
-loadStateFromStorage();
+const initApp = async () => {
+  await initDB();
+  await loadStateFromDB();
+  refreshState();
+};
+
+initApp();
 
 const carOptions = ['JXJ-978'];
 
@@ -228,7 +267,7 @@ const renderOrderList = () => {
         if (state.shift) {
           state.historyOrders.push(order);
         }
-        saveStateToStorage();
+        saveStateToDB();
         renderOrderList();
         return;
       }
@@ -348,7 +387,7 @@ const addOrder = () => {
   state.shift.orders.push(order);
   logEvent(`Új rendelés felvéve: ${code} (${amount} Ft, ${payMethod})`);
   resetOrderForm();
-  saveStateToStorage();
+  saveStateToDB();
   renderOrderList();
 };
 
@@ -385,7 +424,7 @@ const confirmPayment = () => {
 
   logEvent(`Rendelés kifizetve: ${order.code} (${order.amount} Ft) (${selectedPayMethod})`);
   settleOrderIfReady(order);
-  saveStateToStorage();
+  saveStateToDB();
   renderOrderList();
   toast('Fizetés rögzítve. Adj hozzá borravalót, ha van.');
 };
@@ -406,7 +445,7 @@ const addTip = () => {
   }
   logEvent(`Borravaló rögzítve: ${state.currentOrder.code} +${tipValue} Ft`);
   settleOrderIfReady(state.currentOrder);
-  saveStateToStorage();
+  saveStateToDB();
   renderOrderList();
   toast('Borravaló mentve.');
 };
@@ -422,7 +461,7 @@ const setActiveShift = (car, km, cash) => {
   hide('map-panel');
   renderOrderList();
   logEvent(`Szolgálat indítva: ${car}, start km: ${km}, készpénz: ${cash} Ft`);
-  saveStateToStorage();
+  saveStateToDB();
 };
 
 const refreshState = () => {
@@ -469,7 +508,7 @@ el('login-btn').addEventListener('click', () => {
   }
   state.currentUser = found;
   logEvent(`Bejelentkezés: ${found.name}`);
-  saveStateToStorage();
+  saveStateToDB();
   el('login-error').textContent = '';
   echoStart();
 });
@@ -483,7 +522,7 @@ el('logout-btn').addEventListener('click', () => {
   state.currentOrder = null;
   el('username').value = '';
   el('password').value = '';
-  saveStateToStorage();
+  saveStateToDB();
   refreshState();
   toast('Kijelentkezve (szolgálat megőrizve)');
 });
@@ -547,7 +586,7 @@ el('close-day-btn').addEventListener('click', () => {
   });
   state.shift = null;
   state.currentOrder = null;
-  saveStateToStorage();
+  saveStateToDB();
   logEvent(`Napzárás végrehajtva: szolgálat lezárva ${closedShift.car}`);
   refreshState();
   toast('Napzárás megtörtént, szolgálat lezárva.');
@@ -632,7 +671,7 @@ el('confirm-payment-btn').addEventListener('click', () => {
     logEvent(`Fizetés megerősítve ${typeName}-ként majd a rendelés lezárva: ${order.amount} Ft`);
   }
 
-  saveStateToStorage();
+  saveStateToDB();
   show('tip-panel');
   toast('Fizetés rögzítve');
 });
@@ -651,7 +690,7 @@ el('add-tip-btn').addEventListener('click', () => {
   if (state.shift) state.shift.cash += tip;
   if (state.currentUser) state.currentUser.totalTip += tip;
   logEvent(`Borravaló rögzítve ${tip} Ft. Tárca: ${state.shift.cash} Ft`);
-  saveStateToStorage();
+  saveStateToDB();
   renderProfile();
   toast('Borravaló mentve');
   el('tip-amount').value = '';
